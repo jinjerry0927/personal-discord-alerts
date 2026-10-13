@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "started_at": "2026-10-13T17:44:44.079065+00:00",
+  "seen": [
+    "2076418567143408112:banked:announced",
+    "2076735790567338203:banked:announced",
+    "2087706104814023111:reset_done:confirmed",
+    "2090766694897619318:banked:announced",
+    "2090947196107764189:banked:arriving",
+    "2090964822422949999:banked:available",
+    "2091688655828246890:reset_done:confirmed",
+    "2092311059197808936:reset_done:confirmed",
+    "2093014447833116908:reset_done:confirmed",
+    "2093801758665715784:reset_done:confirmed",
+    "2094252447271366730:reset_done:confirmed",
+    "2095651088502591861:banked:announced",
+    "2095979536043401428:banked:arriving",
+    "2096035437299237298:banked:arriving",
+    "2097043464538264003:reset_done:confirmed",
+    "2098685367058612394:reset_done:confirmed",
+    "2102463847714247142:banked:arriving",
+    "2103911959544610829:reset_done:confirmed",
+    "2105008012525769969:banked:available",
+    "2105843926221660585:reset_notice:announced",
+    "2106131810921136451:reset_done:confirmed",
+    "2107676072871600470:reset_done:confirmed",
+    "2107913674593644711:banked:announced",
+    "2107975486798164736:banked:available",
+    "2109045392684032299:reset_done:confirmed",
+    "2109132167112782291:reset_done:confirmed",
+    "2109812360596865224:reset_done:confirmed"
+  ]
+}
