@@ -1,0 +1,12 @@
+{
+  "timeline": {
+    "updated_at": "2026-10-14T03:00:00Z",
+    "events": [
+      {"id": "demo-notice", "announced_at": "2026-10-14T01:00:00Z", "announcement_state": "none", "group": "reset", "type": "reset", "summary": "A global reset will arrive tomorrow."},
+      {"id": "demo-done", "announced_at": "2026-10-14T02:00:00Z", "announcement_state": "announced", "group": "reset", "type": "reset", "summary": "A usage refresh has been verified by the tracker."},
+      {"id": "demo-banked", "announced_at": "2026-10-14T02:30:00Z", "group": "credits", "type": "credits", "banked_state": "available", "summary": "An additional banked reset is available to eligible accounts."},
+      {"id": "demo-joke", "announced_at": "2026-10-14T02:40:00Z", "announcement_state": "none", "group": "reset", "type": "reset", "summary": "Maybe I should reset my sleep schedule."}
+    ]
+  },
+  "feed": {"fetched_at": "2026-10-14T03:00:00Z", "stale": false, "tweets": []}
+}

@@ -1,0 +1,108 @@
+{
+  "mode": "demo",
+  "classified_count": 3,
+  "messages": [
+    {
+      "username": "Codex Reset 알림",
+      "allowed_mentions": {
+        "parse": []
+      },
+      "embeds": [
+        {
+          "title": "[데모] 🔔 리셋 예고",
+          "description": "전체 사용량 리셋을 예고하는 명시적인 공지가 감지되었습니다.\n적용 완료는 아직 확인되지 않았습니다.",
+          "color": 15774258,
+          "fields": [
+            {
+              "name": "게시/기록 시각 · 한국 시간",
+              "value": "2026-10-14 10:00 KST"
+            },
+            {
+              "name": "시각 안내",
+              "value": "위 시각은 기록 시각입니다. 예고된 적용 시각은 아래 영어 근거/링크에서 확인하세요."
+            },
+            {
+              "name": "추적 서비스의 영어 요약",
+              "value": "A global reset will arrive tomorrow."
+            },
+            {
+              "name": "출처",
+              "value": "[Data: codex-reset.com](https://codex-reset.com)"
+            }
+          ],
+          "footer": {
+            "text": "공개 API + 보수적 규칙 분류 · 정형 한국어 요약 · 전체 원문 번역 아님"
+          }
+        }
+      ]
+    },
+    {
+      "username": "Codex Reset 알림",
+      "allowed_mentions": {
+        "parse": []
+      },
+      "embeds": [
+        {
+          "title": "[데모] ✅ 리셋 완료",
+          "description": "추적 서비스가 전체 사용량 리셋 완료를 기록했습니다.\n본인 계정의 실제 사용량도 확인하세요.",
+          "color": 3066993,
+          "fields": [
+            {
+              "name": "게시/기록 시각 · 한국 시간",
+              "value": "2026-10-14 11:00 KST"
+            },
+            {
+              "name": "시각 안내",
+              "value": "위 시각은 기록 시각입니다. 예고된 적용 시각은 아래 영어 근거/링크에서 확인하세요."
+            },
+            {
+              "name": "추적 서비스의 영어 요약",
+              "value": "A usage refresh has been verified by the tracker."
+            },
+            {
+              "name": "출처",
+              "value": "[Data: codex-reset.com](https://codex-reset.com)"
+            }
+          ],
+          "footer": {
+            "text": "공개 API + 보수적 규칙 분류 · 정형 한국어 요약 · 전체 원문 번역 아님"
+          }
+        }
+      ]
+    },
+    {
+      "username": "Codex Reset 알림",
+      "allowed_mentions": {
+        "parse": []
+      },
+      "embeds": [
+        {
+          "title": "[데모] 🎟️ 초기화권 지급 안내",
+          "description": "저장해 두었다가 사용하는 초기화권 소식입니다.\n상태: **추적 서비스에서 지급 확인**\n자동 리셋 완료와는 별개이며, 본인 계정에서 지급 여부를 확인하세요.",
+          "color": 10181046,
+          "fields": [
+            {
+              "name": "게시/기록 시각 · 한국 시간",
+              "value": "2026-10-14 11:30 KST"
+            },
+            {
+              "name": "시각 안내",
+              "value": "위 시각은 기록 시각입니다. 예고된 적용 시각은 아래 영어 근거/링크에서 확인하세요."
+            },
+            {
+              "name": "추적 서비스의 영어 요약",
+              "value": "An additional banked reset is available to eligible accounts."
+            },
+            {
+              "name": "출처",
+              "value": "[Data: codex-reset.com](https://codex-reset.com)"
+            }
+          ],
+          "footer": {
+            "text": "공개 API + 보수적 규칙 분류 · 정형 한국어 요약 · 전체 원문 번역 아님"
+          }
+        }
+      ]
+    }
+  ]
+}
