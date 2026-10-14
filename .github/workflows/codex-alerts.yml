@@ -1,9 +1,6 @@
 name: Codex Reset Alerts
 
 on:
-  schedule:
-    # UTC minutes 03, 13, 23, 33, 43, 53: avoid the busy top of the hour.
-    - cron: '3-59/10 * * * *'
   workflow_dispatch:
     inputs:
       mode:
