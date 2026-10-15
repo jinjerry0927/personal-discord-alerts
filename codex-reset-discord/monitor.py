@@ -8,7 +8,7 @@ import math
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -20,6 +20,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 SOURCE = "https://codex-reset.com"
 KST = timezone(timedelta(hours=9))
 MAX_RESPONSE_BYTES = 2_000_000
+RULES_VERSION = 2
 
 
 class MonitorError(Exception):
@@ -134,11 +135,19 @@ class Alert:
     evidence: str
     url: str | None
     evidence_label: str
+    posted_at: datetime | None = None
+    detected_at: datetime | None = None
+    api_fetched_at: datetime | None = None
+    related_url: str | None = None
+    related_evidence: str | None = None
+    deadline: datetime | None = None
+    thread_id: str | None = None
 
     @property
     def key(self) -> str:
-        # The same post can first announce a reset, then become confirmed.
-        return f"{self.source_id}:{self.category}:{self.stage}"
+        # A linked reset thread can progress from scheduled to observed/confirmed.
+        identity = self.thread_id if self.category in ("reset_notice", "reset_done") else self.source_id
+        return f"{identity or self.source_id}:{self.category}:{self.stage}"
 
 
 def classify_event(event: dict, tweet: dict | None = None) -> Alert | None:
@@ -158,11 +167,14 @@ def classify_event(event: dict, tweet: dict | None = None) -> Alert | None:
     url = raw_url if isinstance(raw_url, str) and raw_url.startswith("https://x.com/thsottiaux/status/") else None
 
     def alert(category: str, stage: str) -> Alert:
-        return Alert(str(source_id), category, stage, at, evidence, url, evidence_label)
+        posted_at = parse_time(tweet.get("at")) if tweet else None
+        return Alert(str(source_id), category, stage, at, evidence, url, evidence_label,
+                     posted_at=posted_at)
 
     if group == "reset" and event.get("announcement_state") == "announced":
-        # The source's documented completion rule, not the English keyword alone.
-        return alert("reset_done", "confirmed")
+        # The documented tracker signal is not necessarily a Tibo confirmation.
+        observed = event.get("source") == "operator-observed" or event.get("reset_verification_status") == "pending"
+        return alert("reset_done", "observed" if observed else "confirmed")
 
     if group == "credits":
         if not has(r"\bbanked\s+(?:codex\s+)?resets?\b", text):
@@ -194,16 +206,144 @@ def classify_event(event: dict, tweet: dict | None = None) -> Alert | None:
     return None
 
 
+def post_url(tweet: dict) -> str | None:
+    value = tweet.get("url")
+    identity = str(tweet.get("id", ""))
+    expected = f"https://x.com/thsottiaux/status/{identity}"
+    return value if re.fullmatch(r"\d{1,20}", identity) and isinstance(value, str) and value == expected else None
+
+
+def reset_context(text: str) -> bool:
+    text = normalize(text)
+    return not ambiguous(text) and not has(r"\b(?:banked|router|password|factory|device|sleep)\b", text) and has(
+        r"\b(?:global|full|usage(?:[- ]limits?)?|codex)\s+resets?\b"
+        r"|\breset\s+button\b|\bday\s*\d+\s*/\s*reset\b", text)
+
+
+def reply_context(tweet: dict, tweets: dict[str, dict]) -> tuple[dict | None, str | None, bool]:
+    """Follow only explicit, same-author reply links; never guess from nearby posts."""
+    immediate = None
+    root = str(tweet.get("id", ""))
+    found = False
+    visited = {root}
+    cursor = tweet
+    posted = parse_time(tweet.get("at"))
+    for _ in range(4):
+        parent_id = str(cursor.get("in_reply_to_tweet_id", ""))
+        parent = tweets.get(parent_id)
+        if parent_id in visited or not parent or not post_url(parent):
+            break
+        parent_at = parse_time(parent.get("at"))
+        if posted is None or parent_at is None or not timedelta(0) <= posted - parent_at <= timedelta(hours=24):
+            break
+        visited.add(parent_id)
+        immediate = immediate or parent
+        root = parent_id
+        found = found or reset_context(str(parent.get("text", "")))
+        cursor = parent
+    return immediate, root, found
+
+
+def relative_deadline(text: str, posted: datetime) -> datetime | None:
+    match = re.search(r"\bwithin\s+(?:the\s+next\s+)?(\d{1,2})\s+(hours?|minutes?)\b", text, re.I)
+    if not match:
+        return None
+    count = int(match[1])
+    return posted + (timedelta(hours=count) if match[2].lower().startswith("hour") else timedelta(minutes=count))
+
+
+def classify_post(tweet: dict, tweets: dict[str, dict]) -> Alert | None:
+    posted = parse_time(tweet.get("at"))
+    if posted is None or not post_url(tweet) or not isinstance(tweet.get("text"), str):
+        return None
+    text = normalize(tweet["text"])
+    parent, root, contextual_reset = reply_context(tweet, tweets)
+    event = {"id": str(tweet["id"]), "announced_at": posted.isoformat(), "summary": text,
+             "url": tweet["url"], "group": "reset", "announcement_state": "none"}
+    alert = classify_event(event, tweet)
+    if not ambiguous(text):
+        timing_reply = contextual_reset and has(
+            r"^(?:it(?:'s| is)\s+)?(?:landing|arriving|coming)\s+(?:within|in)\s+"
+            r"(?:the\s+next\s+)?\d{1,2}\s+(?:hours?|minutes?)[.!]?$", text)
+        done_reply = contextual_reset and has(
+            r"^(?:(?:it's|it is|all)\s+)?(?:done(?:\s+and\s+dusted)?|processed|propagated|completed|landed)[.!]?$", text)
+        future = has(r"\b(?:will|should|tomorrow|tonight|within|soon|scheduled|planned|expect\w*|later)\b", text)
+        explicit_done = not future and (
+            (reset_context(text) and has(r"\b(?:done|processed|propagated|completed|landed)\b", text)) or
+            has(r"\b(?:we|i)\s+(?:have\s+|just\s+|have\s+now\s+)reset\s+(?:everyone's\s+|all\s+|the\s+)?usage(?:\s+limits?)?\b", text))
+        if timing_reply:
+            alert = Alert(str(tweet["id"]), "reset_notice", "announced", posted,
+                          tweet["text"], tweet["url"], "Tibo 영어 원문", posted_at=posted)
+        elif done_reply or explicit_done:
+            alert = Alert(str(tweet["id"]), "reset_done", "tibo_confirmed", posted,
+                          tweet["text"], tweet["url"], "Tibo 영어 원문", posted_at=posted)
+        elif has(r"\bbanked\s+(?:codex\s+)?resets?\b", text):
+            alert = classify_event(dict(event, group="credits", banked_state="unknown"), tweet)
+    if alert:
+        alert = replace(alert, related_url=post_url(parent) if parent else None,
+                        related_evidence=parent.get("text") if parent else None,
+                        deadline=relative_deadline(text, posted) if alert.category == "reset_notice" else None,
+                        thread_id=root)
+    return alert
+
+
 def collect_alerts(snapshot: dict) -> list[Alert]:
     tweets = {str(t["id"]): t for t in snapshot["feed"]["tweets"] if isinstance(t, dict) and "id" in t}
-    alerts = {}
+    alerts = []
     for event in snapshot["timeline"]["events"]:
         if not isinstance(event, dict):
             continue
         alert = classify_event(event, tweets.get(str(event.get("id"))))
         if alert:
-            alerts[alert.key] = alert
-    return sorted(alerts.values(), key=lambda item: (item.at, item.key))
+            tweet = tweets.get(alert.source_id)
+            if tweet:
+                parent, root, _ = reply_context(tweet, tweets)
+                alert = replace(alert, thread_id=root, related_url=post_url(parent) if parent else None,
+                                related_evidence=parent.get("text") if parent else None)
+            alerts.append(alert)
+    alerts.extend(alert for tweet in tweets.values() if (alert := classify_post(tweet, tweets)))
+    # An author-confirmed reply supersedes an operator observation in the same thread.
+    priority = {"announced": 0, "arriving": 1, "observed": 1, "confirmed": 2, "available": 2, "tibo_confirmed": 3}
+    grouped = {}
+    for alert in alerts:
+        key = (alert.thread_id or alert.source_id, alert.category)
+        old = grouped.get(key)
+        if old is None or (priority.get(alert.stage, 0), alert.at) > (priority.get(old.stage, 0), old.at):
+            grouped[key] = alert
+    completed = {identity for identity, category in grouped if category == "reset_done"}
+    return sorted((alert for (identity, category), alert in grouped.items()
+                   if category != "reset_notice" or identity not in completed), key=lambda item: (item.at, item.key))
+
+
+def collect_posts(snapshot: dict) -> list[Alert]:
+    """Relay every available Tibo text post, without a Codex/reset keyword filter."""
+    posts = {}
+    for tweet in snapshot["feed"]["tweets"]:
+        if not isinstance(tweet, dict) or not post_url(tweet) or not isinstance(tweet.get("text"), str):
+            continue
+        posted = parse_time(tweet.get("at"))
+        if posted:
+            post = Alert(str(tweet["id"]), "tibo_post", "raw", posted, tweet["text"],
+                         tweet["url"], "Tibo 영어 원문", posted_at=posted)
+            posts[post.key] = post
+    return sorted(posts.values(), key=lambda item: (item.at, item.key))
+
+
+def record_first_seen(alerts: list[Alert], path: Path, now: datetime) -> dict[str, str]:
+    state = read_json(path) if path.exists() else {"version": 1, "first_seen": {}}
+    entries = state.get("first_seen")
+    if state.get("version") != 1 or not isinstance(entries, dict) or any(
+        not isinstance(key, str) or parse_time(value) is None for key, value in entries.items()
+    ):
+        raise MonitorError("최초 감지 시각 기록이 손상되었습니다.")
+    changed = False
+    for alert in alerts:
+        if alert.source_id not in entries:
+            entries[alert.source_id] = now.isoformat()
+            changed = True
+    if changed:
+        save_state(path, state)
+    return entries
 
 
 def clean_evidence(text: str) -> str:
@@ -212,23 +352,65 @@ def clean_evidence(text: str) -> str:
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)[:850]
 
 
-def build_payload(alert: Alert, *, demo: bool = False) -> dict:
+def format_kst(value: datetime) -> str:
+    return value.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S KST")
+
+
+def timing_fields(alert: Alert, sent_at: datetime | None) -> list[dict]:
+    fields = [{"name": "X 게시 시각", "value": format_kst(alert.posted_at) if alert.posted_at else "API에 원문 게시 시각이 없습니다."},
+              {"name": "우리 프로그램 최초 감지", "value": format_kst(alert.detected_at) if alert.detected_at else "미리보기 · 운영 실행 때 기록합니다."}]
+    if alert.posted_at and alert.detected_at:
+        seconds = max(0, int((alert.detected_at - alert.posted_at).total_seconds()))
+        fields.append({"name": "게시 → 최초 감지", "value": f"{seconds // 60}분 {seconds % 60}초 · API 반영 대기와 예약 대기 포함"})
+    if sent_at:
+        fields.append({"name": "이번 전송 요청 시각", "value": format_kst(sent_at)})
+    if alert.api_fetched_at:
+        fields.append({"name": "API 피드 갱신 시각", "value": format_kst(alert.api_fetched_at)})
+    if alert.category != "tibo_post" and alert.at != alert.posted_at:
+        fields.append({"name": "추적 서비스 기록 시각", "value": format_kst(alert.at)})
+    return fields
+
+
+def build_payload(alert: Alert, *, demo: bool = False, sent_at: datetime | None = None) -> dict:
+    if alert.category == "tibo_post":
+        # Keep raw wording (including @ and backticks); allowed_mentions blocks pings.
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", alert.evidence)
+        truncated = len(text) > 3800
+        description = text[:3800] + ("\n…원문이 길어 일부만 표시합니다. X 링크에서 전체를 확인하세요." if truncated else "")
+        return {"username": "Tibo 원문", "allowed_mentions": {"parse": []}, "embeds": [{
+            "title": ("[데모] " if demo else "") + "📝 Tibo 새 포스팅 · 분류 없는 원문",
+            "description": description or "텍스트가 없는 포스팅입니다. 원문 링크를 확인하세요.",
+            "url": alert.url, "color": 0x5865F2,
+            "fields": timing_fields(alert, sent_at) + [{"name": "출처", "value": f"[Data: codex-reset.com]({SOURCE})"}],
+            "footer": {"text": "API에 수집된 글 전체 · 리셋 여부를 판단하지 않습니다 · 이미지/영상은 X 링크에서 확인"},
+        }]}
     if alert.category == "reset_notice":
-        title, color = "🔔 리셋 예고", 0xF0B232
-        description = "전체 사용량 리셋을 예고하는 명시적인 공지가 감지되었습니다.\n적용 완료는 아직 확인되지 않았습니다."
+        title, color = "🔔 리셋 예정", 0xF0B232
+        description = "Tibo의 게시물과 연결된 답글에서 사용량 리셋 예고를 감지했습니다.\n적용 완료는 아직 확인되지 않았습니다."
     elif alert.category == "reset_done":
-        title, color = "✅ 리셋 완료", 0x2ECC71
-        description = "추적 서비스가 전체 사용량 리셋 완료를 기록했습니다.\n본인 계정의 실제 사용량도 확인하세요."
+        title, color = "✅ 리셋 적용", 0x2ECC71
+        if alert.stage == "tibo_confirmed":
+            description = "Tibo의 게시물 또는 같은 리셋 대화의 답글에서 적용 확인 문구를 감지했습니다."
+        elif alert.stage == "observed":
+            description = "추적 서비스가 리셋 적용을 관측했습니다. Tibo의 직접 확인과는 구분됩니다."
+        else:
+            description = "추적 서비스가 문서화한 기준에 따라 리셋 적용을 기록했습니다."
+        description += "\n본인 계정의 실제 사용량도 확인하세요."
     else:
-        title, color = "🎟️ 초기화권 지급 안내", 0x9B59B6
+        title, color = "🎟️ 리셋권 지급 안내", 0x9B59B6
         stage = {"announced": "지급 안내", "arriving": "지급 진행/예정", "available": "추적 서비스에서 지급 확인"}[alert.stage]
         description = f"저장해 두었다가 사용하는 초기화권 소식입니다.\n상태: **{stage}**\n자동 리셋 완료와는 별개이며, 본인 계정에서 지급 여부를 확인하세요."
-    fields = [
-        {"name": "게시/기록 시각 · 한국 시간", "value": alert.at.astimezone(KST).strftime("%Y-%m-%d %H:%M KST")},
-        {"name": "시각 안내", "value": "위 시각은 기록 시각입니다. 예고된 적용 시각은 아래 영어 근거/링크에서 확인하세요."},
+    fields = timing_fields(alert, sent_at) + [
         {"name": alert.evidence_label, "value": clean_evidence(alert.evidence)},
         {"name": "출처", "value": f"[Data: codex-reset.com]({SOURCE})"},
     ]
+    if alert.deadline:
+        fields.append({"name": "원문 기준 적용 예정 기한", "value": format_kst(alert.deadline) + "까지 · 게시 시각 + 원문의 상대 시간, 실제 적용 보장 아님"})
+    if alert.category == "reset_done":
+        basis = {"tibo_confirmed": "Tibo 적용 확인 문구", "observed": "추적 서비스 관측 · Tibo 확인 대기", "confirmed": "추적 서비스의 적용 기록"}[alert.stage]
+        fields.append({"name": "적용 판단 근거", "value": basis})
+    if alert.related_url:
+        fields.append({"name": "연결된 원글/이전 답글", "value": f"[연결된 글 열기]({alert.related_url})\n{clean_evidence(alert.related_evidence or '')}"})
     if alert.url:
         fields.append({"name": "관련 X 게시물", "value": f"[원문 열기]({alert.url})"})
     return {
@@ -239,7 +421,7 @@ def build_payload(alert: Alert, *, demo: bool = False) -> dict:
             "description": description,
             "color": color,
             "fields": fields,
-            "footer": {"text": "공개 API + 보수적 규칙 분류 · 정형 한국어 요약 · 전체 원문 번역 아님"},
+            "footer": {"text": "공개 API + 원글/답글 규칙 분류 · AI 미사용 · 전체 원문 번역 아님"},
         }],
     }
 
@@ -292,8 +474,14 @@ def save_state(path: Path, state: dict) -> None:
 def process(alerts: list[Alert], state_path: Path, now: datetime, sender: Callable[[dict], None], *, max_age_hours: int = 24) -> tuple[int, bool]:
     state = load_state(state_path)
     if state is None:
-        save_state(state_path, {"version": 1, "started_at": now.isoformat(), "seen": [item.key for item in alerts]})
+        save_state(state_path, {"version": 1, "rules_version": RULES_VERSION, "started_at": now.isoformat(), "seen": [item.key for item in alerts]})
         return 0, True  # Establish a baseline; do not flood Discord with history.
+    if state.get("rules_version") != RULES_VERSION:
+        # New classification rules must not replay old notices or observed resets.
+        state["seen"] = sorted(set(state["seen"]) | {item.key for item in alerts})
+        state["rules_version"] = RULES_VERSION
+        save_state(state_path, state)
+        return 0, True
     seen = set(state["seen"])
     sent = 0
     for alert in alerts:
@@ -302,7 +490,8 @@ def process(alerts: list[Alert], state_path: Path, now: datetime, sender: Callab
         if alert.at < now - timedelta(hours=max_age_hours) or alert.at > now + timedelta(minutes=5):
             continue
         # A previously unclassified post can later gain a confirmed source state.
-        sender(build_payload(alert))
+        sender(build_payload(replace(alert, detected_at=alert.detected_at or now),
+                             sent_at=datetime.now(timezone.utc)))
         seen.add(alert.key)
         state["seen"] = sorted(seen)
         save_state(state_path, state)  # Each acknowledged message is checkpointed.
@@ -315,20 +504,22 @@ def main() -> int:
     parser.add_argument("--send", action="store_true", help="실제 Discord 전송. 최초에는 기준점만 저장")
     parser.add_argument("--demo", action="store_true", help="가상 데이터 3종 미리보기. 네트워크/상태 저장 없음")
     parser.add_argument("--test-webhook", action="store_true", help="연결 테스트 메시지 1건을 Discord에 실제 전송")
+    parser.add_argument("--test-feed-webhook", action="store_true", help="원문 채널 연결 테스트 메시지 1건 전송")
     parser.add_argument("--snapshot-dir", type=Path, help="timeline.json/feed.json을 읽는 오프라인 검증")
     parser.add_argument("--state", type=Path, default=Path("state/state.json"))
     parser.add_argument("--now", help="오프라인 검증용 현재 시각 (타임존 포함 ISO 8601)")
     args = parser.parse_args()
     cooldown_path = args.state.parent / "cooldown.json"
     try:
-        if args.test_webhook:
-            if args.send or args.demo or args.snapshot_dir or args.now:
+        if args.test_webhook or args.test_feed_webhook:
+            if args.send or args.demo or args.snapshot_dir or args.now or (args.test_webhook and args.test_feed_webhook):
                 raise MonitorError("웹훅 연결 테스트는 다른 실행 모드와 함께 사용할 수 없습니다.")
-            webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "")
+            secret_name = "TIBO_FEED_WEBHOOK_URL" if args.test_feed_webhook else "DISCORD_WEBHOOK_URL"
+            webhook_url = os.getenv(secret_name, "")
             if not webhook_url:
-                raise MonitorError("DISCORD_WEBHOOK_URL이 없습니다. 전송하지 않습니다.")
+                raise MonitorError(f"{secret_name}이 없습니다. 전송하지 않습니다.")
             send_payload(webhook_url, build_connection_test_payload())
-            print(json.dumps({"mode": "test", "sent": 1}))
+            print(json.dumps({"mode": "test-feed" if args.test_feed_webhook else "test", "sent": 1}))
             return 0
         if args.send and (args.demo or args.snapshot_dir or args.now):
             raise MonitorError("오프라인/데모 데이터는 실제 전송할 수 없습니다.")
@@ -355,17 +546,43 @@ def main() -> int:
                 "CodexResetDiscordPrototype/0.1 (personal local evaluation)"
             )
             snapshot = fetch_snapshot(user_agent)
+            now = datetime.now(timezone.utc)
         validate_snapshot(snapshot, now)
         alerts = collect_alerts(snapshot)
+        posts = collect_posts(snapshot)
+        fetched_at = parse_time(snapshot["feed"].get("fetched_at"))
         if not args.send:
             print(json.dumps({"mode": "demo" if args.demo else "preview", "classified_count": len(alerts),
-                              "messages": [build_payload(item, demo=args.demo) for item in alerts]}, ensure_ascii=False, indent=2))
+                              "messages": [build_payload(replace(item, api_fetched_at=fetched_at), demo=args.demo) for item in alerts],
+                              "raw_post_count": len(posts), "raw_messages": [build_payload(replace(item, api_fetched_at=fetched_at), demo=args.demo) for item in posts]}, ensure_ascii=False, indent=2))
             return 0
         webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "")
         if not webhook_url:
             raise MonitorError("DISCORD_WEBHOOK_URL이 없습니다. 전송하지 않습니다.")
-        sent, initialized = process(alerts, args.state, now, lambda payload: send_payload(webhook_url, payload))
-        print(json.dumps({"sent": sent, "initialized": initialized, "classified_count": len(alerts)}))
+        first_seen = record_first_seen(alerts + posts, args.state.parent / "observations.json", now)
+        def enrich(items):
+            return [replace(item, detected_at=parse_time(first_seen[item.source_id]), api_fetched_at=fetched_at) for item in items]
+        # Separate receipts and independent attempts keep a raw-channel failure from
+        # losing an acknowledged reset alert (or preventing a raw post delivery).
+        results = {}
+        failures = []
+        channels = [("alerts", webhook_url, enrich(alerts), args.state)]
+        feed_url = os.getenv("TIBO_FEED_WEBHOOK_URL", "")
+        if feed_url:
+            if feed_url == webhook_url:
+                raise MonitorError("원문 채널과 리셋 채널에는 서로 다른 웹훅을 지정하세요.")
+            channels.append(("feed", feed_url, enrich(posts), args.state.parent / "feed-state.json"))
+        for channel, url, items, path in channels:
+            try:
+                sent, initialized = process(items, path, now, lambda payload, target=url: send_payload(target, payload))
+                results[channel] = {"sent": sent, "initialized": initialized}
+            except MonitorError as exc:
+                failures.append(exc)
+                results[channel] = {"error": str(exc)}
+        print(json.dumps({"channels": results, "raw_channel_enabled": bool(feed_url), "classified_count": len(alerts),
+                          "raw_post_count": len(posts), "api_fetched_at": snapshot["feed"].get("fetched_at"), "checked_at": now.isoformat()}, ensure_ascii=False))
+        if failures:
+            raise max(failures, key=lambda exc: exc.retry_after_seconds or 0)
         return 0
     except MonitorError as exc:
         if args.send and exc.retry_after_seconds:

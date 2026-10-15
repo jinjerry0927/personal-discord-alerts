@@ -90,8 +90,10 @@ class ClassificationTests(unittest.TestCase):
         payload = monitor.build_payload(alert)
         self.assertEqual(payload["allowed_mentions"], {"parse": []})
         fields = payload["embeds"][0]["fields"]
-        self.assertEqual(fields[0]["value"], "2026-10-14 11:00 KST")
-        self.assertNotIn("@everyone", fields[2]["value"])
+        by_name = {field["name"]: field["value"] for field in fields}
+        self.assertEqual(by_name["X 게시 시각"], "API에 원문 게시 시각이 없습니다.")
+        self.assertEqual(by_name["추적 서비스 기록 시각"], "2026-10-14 11:00:00 KST")
+        self.assertNotIn("@everyone", by_name["추적 서비스의 영어 요약"])
 
 
 class SnapshotTests(unittest.TestCase):

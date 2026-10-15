@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'preview: API 미리보기 / test: 연결 테스트 1건 전송 / send: 운영 / demo: 가상 미리보기'
+        description: 'preview: 미리보기 / test: 리셋 채널 테스트 / test-feed: 원문 채널 테스트 / send: 운영 / demo: 가상 미리보기'
         type: choice
-        options: [preview, test, send, demo]
+        options: [preview, test, test-feed, send, demo]
         default: preview
 
 permissions:
@@ -28,6 +28,7 @@ jobs:
       PYTHONUTF8: '1'
       MODE: ${{ inputs.mode || 'send' }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      TIBO_FEED_WEBHOOK_URL: ${{ secrets.TIBO_FEED_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,6 +47,7 @@ jobs:
             demo) python monitor.py --demo ;;
             preview) python monitor.py ;;
             test) python monitor.py --test-webhook ;;
+            test-feed) python monitor.py --test-feed-webhook ;;
             *) exit 1 ;;
           esac
       - name: Persist successful delivery checkpoints
