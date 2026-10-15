@@ -26,9 +26,13 @@
     "2107676072871600470:reset_done:confirmed",
     "2107913674593644711:banked:announced",
     "2107975486798164736:banked:available",
+    "2109045220411351517:reset_done:observed",
     "2109045392684032299:reset_done:confirmed",
     "2109132167112782291:reset_done:confirmed",
+    "2109812216212099456:reset_done:confirmed",
     "2109812360596865224:reset_done:confirmed",
+    "2110595484180214059:reset_done:confirmed",
     "2110595554036400151:reset_done:confirmed"
-  ]
+  ],
+  "rules_version": 2
 }
