@@ -137,6 +137,7 @@ class Alert:
     evidence_label: str
     posted_at: datetime | None = None
     detected_at: datetime | None = None
+    state_detected_at: datetime | None = None
     api_fetched_at: datetime | None = None
     related_url: str | None = None
     related_evidence: str | None = None
@@ -338,9 +339,13 @@ def record_first_seen(alerts: list[Alert], path: Path, now: datetime) -> dict[st
         raise MonitorError("최초 감지 시각 기록이 손상되었습니다.")
     changed = False
     for alert in alerts:
-        if alert.source_id not in entries:
-            entries[alert.source_id] = now.isoformat()
-            changed = True
+        keys = [alert.source_id]
+        if alert.category != "tibo_post":
+            keys.append(f"state:{alert.key}")
+        for key in keys:
+            if key not in entries:
+                entries[key] = now.isoformat()
+                changed = True
     if changed:
         save_state(path, state)
     return entries
@@ -358,10 +363,12 @@ def format_kst(value: datetime) -> str:
 
 def timing_fields(alert: Alert, sent_at: datetime | None) -> list[dict]:
     fields = [{"name": "X 게시 시각", "value": format_kst(alert.posted_at) if alert.posted_at else "API에 원문 게시 시각이 없습니다."},
-              {"name": "우리 프로그램 최초 감지", "value": format_kst(alert.detected_at) if alert.detected_at else "미리보기 · 운영 실행 때 기록합니다."}]
+              {"name": "원문/항목 최초 감지", "value": format_kst(alert.detected_at) if alert.detected_at else "미리보기 · 운영 실행 때 기록합니다."}]
     if alert.posted_at and alert.detected_at:
         seconds = max(0, int((alert.detected_at - alert.posted_at).total_seconds()))
-        fields.append({"name": "게시 → 최초 감지", "value": f"{seconds // 60}분 {seconds % 60}초 · API 반영 대기와 예약 대기 포함"})
+        fields.append({"name": "게시 → 원문 감지", "value": f"{seconds // 60}분 {seconds % 60}초 · API 반영 대기와 예약 대기 포함"})
+    if alert.state_detected_at and alert.category != "tibo_post":
+        fields.append({"name": "이번 리셋 상태 최초 감지", "value": format_kst(alert.state_detected_at)})
     if sent_at:
         fields.append({"name": "이번 전송 요청 시각", "value": format_kst(sent_at)})
     if alert.api_fetched_at:
@@ -561,7 +568,9 @@ def main() -> int:
             raise MonitorError("DISCORD_WEBHOOK_URL이 없습니다. 전송하지 않습니다.")
         first_seen = record_first_seen(alerts + posts, args.state.parent / "observations.json", now)
         def enrich(items):
-            return [replace(item, detected_at=parse_time(first_seen[item.source_id]), api_fetched_at=fetched_at) for item in items]
+            return [replace(item, detected_at=parse_time(first_seen[item.source_id]),
+                            state_detected_at=parse_time(first_seen.get(f"state:{item.key}")),
+                            api_fetched_at=fetched_at) for item in items]
         # Separate receipts and independent attempts keep a raw-channel failure from
         # losing an acknowledged reset alert (or preventing a raw post delivery).
         results = {}

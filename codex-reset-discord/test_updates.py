@@ -155,9 +155,9 @@ class RelayAndTimingTests(unittest.TestCase):
         payload = monitor.build_payload(alert, sent_at=detected+timedelta(seconds=5))
         fields = {f["name"]: f["value"] for f in payload["embeds"][0]["fields"]}
         self.assertEqual(fields["X 게시 시각"], "2026-10-15 13:56:07 KST")
-        self.assertEqual(fields["우리 프로그램 최초 감지"], "2026-10-15 15:20:00 KST")
+        self.assertEqual(fields["원문/항목 최초 감지"], "2026-10-15 15:20:00 KST")
         self.assertEqual(fields["추적 서비스 기록 시각"], "2026-10-15 15:13:01 KST")
-        self.assertTrue(fields["게시 → 최초 감지"].startswith("83분 53초"))
+        self.assertTrue(fields["게시 → 원문 감지"].startswith("83분 53초"))
         self.assertEqual(fields["이번 전송 요청 시각"], "2026-10-15 15:20:05 KST")
 
     def test_relative_deadline_is_from_post_time_not_detection_time(self):
@@ -172,6 +172,21 @@ class RelayAndTimingTests(unittest.TestCase):
             first = monitor.record_first_seen(posts, path, CHECKED)
             again = monitor.record_first_seen(posts, path, CHECKED+timedelta(minutes=10))
             self.assertEqual(first, again)
+
+    def test_later_application_keeps_original_post_detection_and_tracks_new_state_time(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "observations.json"
+            notices = monitor.collect_alerts(snapshot())
+            monitor.record_first_seen(notices + monitor.collect_posts(snapshot()), path, CHECKED)
+            applied_at = datetime(2026, 10, 15, 6, 20, tzinfo=timezone.utc)
+            application = monitor.collect_alerts(snapshot(observed=True))[0]
+            entries = monitor.record_first_seen([application], path, applied_at)
+            self.assertEqual(entries[REPLY], CHECKED.isoformat())
+            self.assertEqual(entries[f"state:{application.key}"], applied_at.isoformat())
+            application = replace(application, detected_at=CHECKED, state_detected_at=applied_at)
+            fields = {f['name']:f['value'] for f in monitor.build_payload(application)['embeds'][0]['fields']}
+            self.assertEqual(fields['원문/항목 최초 감지'], '2026-10-15 14:00:20 KST')
+            self.assertEqual(fields['이번 리셋 상태 최초 감지'], '2026-10-15 15:20:00 KST')
 
     def test_old_state_migration_does_not_replay_newly_recognized_notices(self):
         with tempfile.TemporaryDirectory() as folder:
