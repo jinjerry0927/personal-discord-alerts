@@ -220,7 +220,17 @@ class RelayAndTimingTests(unittest.TestCase):
                     raise monitor.MonitorError('simulated failure')
             env = {"DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/123/alerts",
                    "TIBO_FEED_WEBHOOK_URL": "https://discord.com/api/webhooks/456/feed"}
-            with patch('sys.argv', ['monitor.py','--send','--state',str(state)]), patch.dict('os.environ', env), patch('monitor.fetch_snapshot', return_value=snapshot()), patch('monitor.send_payload', side_effect=send), patch('monitor.validate_snapshot'), patch('sys.stdout', new_callable=io.StringIO), patch('sys.stderr', new_callable=io.StringIO):
+            with (
+                patch('sys.argv', ['monitor.py', '--send', '--state', str(state)]),
+                patch.dict('os.environ', env),
+                patch('monitor.datetime', wraps=datetime) as clock,
+                patch('monitor.fetch_snapshot', return_value=snapshot()),
+                patch('monitor.send_payload', side_effect=send),
+                patch('sys.stdout', new_callable=io.StringIO),
+                patch('sys.stderr', new_callable=io.StringIO),
+            ):
+                # Keep fixture posts within the delivery window on every run date.
+                clock.now.return_value = CHECKED
                 self.assertEqual(monitor.main(), 1)
             self.assertIn(env['TIBO_FEED_WEBHOOK_URL'], urls)
             self.assertEqual(len(monitor.load_state(Path(folder) / 'feed-state.json')['seen']), 2)
