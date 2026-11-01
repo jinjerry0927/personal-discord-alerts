@@ -42,7 +42,8 @@
     "2114200152701575656:reset_done:observed",
     "2114588174249071102:reset_done:observed",
     "2115273064481218829:reset_done:observed",
-    "2116621096580065504:banked:available"
+    "2116621096580065504:banked:available",
+    "2117022101404096435:banked:available"
   ],
   "rules_version": 2
 }
